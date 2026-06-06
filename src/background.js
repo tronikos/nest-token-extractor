@@ -32,7 +32,7 @@ function startListening() {
       {
         urls: ["https://accounts.google.com/o/oauth2/iframerpc*"],
         types: ["xmlhttprequest", "sub_frame", "main_frame"],
-      },["requestHeaders", "extraHeaders"]
+      },["requestHeaders"]
     );
   }
 

@@ -1,3 +1,5 @@
+"use strict";
+
 document.addEventListener("DOMContentLoaded", () => {
   const extractBtn = document.getElementById("extract_btn");
   const envSelect = document.getElementById("env_select");
@@ -16,22 +18,41 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let pollInterval = null;
 
-  // Browser detection for warnings
+  // Browser detection for warnings. Chromium browsers also claim "safari" in
+  // their user agent, so they have to be ruled out first.
   const userAgent = navigator.userAgent.toLowerCase();
+  const isChromium = /chrome|chromium|edg\//.test(userAgent);
   if (userAgent.includes("firefox")) {
-    if (firefoxWarning) firefoxWarning.style.display = "block";
-  } else if (userAgent.includes("chrome") || userAgent.includes("chromium") || userAgent.includes("edg")) {
-    if (chromeWarning) chromeWarning.style.display = "block";
+    firefoxWarning.style.display = "block";
+  } else if (isChromium) {
+    chromeWarning.style.display = "block";
   }
 
   function setStatus(msg, type) {
-    statusArea.innerHTML = `<div class="status ${type}">${msg}</div>`;
+    statusArea.textContent = "";
+    if (!msg) return;
+    const div = document.createElement("div");
+    div.className = `status ${type}`;
+    div.textContent = msg;
+    statusArea.appendChild(div);
+  }
+
+  function sendMessage(message, callback) {
+    chrome.runtime.sendMessage(message, (response) => {
+      // Reading lastError suppresses the "Unchecked runtime.lastError" noise
+      // that appears when the background script is still starting up.
+      if (chrome.runtime.lastError) {
+        if (callback) callback(null);
+        return;
+      }
+      if (callback) callback(response);
+    });
   }
 
   function startPolling() {
     stopPolling();
     pollInterval = setInterval(() => {
-      chrome.runtime.sendMessage({ action: "getStatus" }, (r) => {
+      sendMessage({ action: "getStatus" }, (r) => {
         if (r) updateUI(r);
       });
     }, 1000);
@@ -67,22 +88,34 @@ document.addEventListener("DOMContentLoaded", () => {
       extractBtn.textContent = "Restart Extraction";
       envSelect.disabled = false;
       closeWarning.style.display = "block";
-      setStatus("Credentials captured! Copy the needed fields below.", "success");
+      if (data.issueToken && !data.cookies) {
+        setStatus(
+          "Issue Token captured, still waiting for cookies. Keep the Nest tab open.",
+          "info"
+        );
+      } else {
+        setStatus("Credentials captured! Copy the needed fields below.", "success");
+        if (!data.listening) stopPolling();
+      }
     } else if (data.listening) {
       extractBtn.disabled = true;
       envSelect.disabled = true;
       extractBtn.textContent = "Waiting for login...";
       setStatus("Waiting for credentials... Please sign in on the opened Nest tab.", "info");
+    } else {
+      stopPolling();
+      extractBtn.disabled = false;
+      envSelect.disabled = false;
+      extractBtn.textContent = "Open Nest & Start Extraction";
     }
   }
 
   // Check state on popup load
-  chrome.runtime.sendMessage({ action: "getStatus" }, (r) => {
-    if (r && (r.issueToken || r.cookies || r.accessToken)) {
+  sendMessage({ action: "getStatus" }, (r) => {
+    if (!r) return;
+    if (r.issueToken || r.cookies || r.accessToken || r.listening) {
       updateUI(r);
-    } else if (r && r.listening) {
-      updateUI(r);
-      startPolling();
+      if (r.listening) startPolling();
     }
   });
 
@@ -91,7 +124,7 @@ document.addEventListener("DOMContentLoaded", () => {
     extractBtn.disabled = true;
     envSelect.disabled = true;
     extractBtn.textContent = "Starting...";
-    
+
     googleSection.style.display = "none";
     legacySection.style.display = "none";
     closeWarning.style.display = "none";
@@ -102,8 +135,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const env = envSelect.value;
     const domainName = env === "ft" ? "home.ft.nest.com" : "home.nest.com";
 
-    chrome.runtime.sendMessage({ action: "reset" }, () => {
-      chrome.runtime.sendMessage({ action: "startCapture", env: env }, () => {
+    sendMessage({ action: "reset" }, () => {
+      sendMessage({ action: "startCapture", env: env }, (r) => {
+        if (!r) {
+          extractBtn.disabled = false;
+          envSelect.disabled = false;
+          extractBtn.textContent = "Open Nest & Start Extraction";
+          setStatus("Could not start the extraction. Please try again.", "info");
+          return;
+        }
+        extractBtn.textContent = "Waiting for login...";
         setStatus(`Opening ${domainName}... Sign in if needed. Extraction runs automatically.`, "info");
         startPolling();
       });
@@ -111,19 +152,28 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Setup generic copy buttons
-  document.querySelectorAll(".btn-copy").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      const targetId = e.target.getAttribute("data-target");
-      const el = document.getElementById(targetId);
-      if (el && el.value) {
-        navigator.clipboard.writeText(el.value).then(() => {
-          const originalText = e.target.textContent;
-          e.target.textContent = "Copied!";
-          setTimeout(() => {
-            e.target.textContent = originalText;
-          }, 2000);
-        });
-      }
+  document.querySelectorAll(".btn-copy").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const el = document.getElementById(btn.getAttribute("data-target"));
+      if (!el || !el.value) return;
+      const originalText = btn.textContent;
+      const flash = (text) => {
+        btn.textContent = text;
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 2000);
+      };
+      navigator.clipboard.writeText(el.value).then(
+        () => flash("Copied!"),
+        () => {
+          // Safari can reject the async clipboard API in extension popups.
+          el.removeAttribute("readonly");
+          el.select();
+          const copied = document.execCommand("copy");
+          el.setAttribute("readonly", "");
+          flash(copied ? "Copied!" : "Press Ctrl/Cmd+C");
+        }
+      );
     });
   });
 });

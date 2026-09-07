@@ -30,20 +30,31 @@ Download the respective zip file for your browser from the [Releases page](https
 
 ### Mozilla Firefox
 
+Requires Firefox 115 or newer.
+
 1. Unzip `nest-token-extractor-firefox.zip`.
 2. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`.
 3. Click **Load Temporary Add-on...**
-4. Select the `manifest.json` file inside the unzipped folder.
+4. Select the `manifest.json` file inside the unzipped folder (not `manifest.firefox.json` from the source tree).
 
 ### Apple Safari (macOS)
 
-Because this is an unsigned community build, you must enable Safari's developer settings to register it:
+This is an ad-hoc signed community build, so macOS quarantines it on download and Safari needs its developer settings enabled to load it. Follow the steps in order:
 
-1. Unzip `nest-token-extractor-safari.zip` and move `Nest Token Extractor.app` to your Applications folder.
-2. Open Safari and go to **Safari > Settings > Advanced**. Check **Show features for web developers**.
-3. Go to the new **Develop** menu in your system top bar and click **Allow Unsigned Extensions**.
-4. Launch `Nest Token Extractor.app` once to register it with macOS.
-5. Go back into **Safari > Settings > Extensions** and toggle the checkbox next to the extension to enable it.
+1. Unzip `nest-token-extractor-safari.zip` and move `Nest Token Extractor.app` into `/Applications`.
+2. Clear the download quarantine flag, otherwise macOS reports the app as "damaged" and refuses to run it:
+
+    ```sh
+    xattr -dr com.apple.quarantine "/Applications/Nest Token Extractor.app"
+    ```
+
+3. Launch `Nest Token Extractor.app` once. This registers the bundled extension with macOS. You can quit it right after.
+4. Open Safari and go to **Safari > Settings > Advanced** and check **Show features for web developers**.
+5. Go to **Safari > Settings > Developer** and check **Allow unsigned extensions** (you will be asked for your password).
+6. Go to **Safari > Settings > Extensions** and enable the checkbox next to **Nest Token Extractor**.
+
+> [!IMPORTANT]
+> macOS resets **Allow unsigned extensions** every time Safari restarts. If the extension disappears from the toolbar after quitting Safari, re-check that box (step 5) and the extension comes back — you do not need to reinstall it.
 
 ## Usage
 
@@ -54,7 +65,7 @@ Because this is an unsigned community build, you must enable Safari's developer 
 
 > [!TIP]
 > **💡 FIREFOX ENHANCED TRACKING PROTECTION:**
-> Firefox's Enhanced Tracking Protection (ETP) blocks third-party cookie transmission in cross-origin frames by default. While this extension implements automatic cookie jar fallbacks, if you still get an empty **Cookies** field, click the **Shield** icon in the Firefox address bar on `home.nest.com` and toggle off **Enhanced Tracking Protection**. Then restart the extraction.
+> Firefox's Enhanced Tracking Protection (ETP) can block third-party cookie transmission in cross-origin frames. The extension falls back to reading the cookie jar directly, so this is rarely a problem, but if the **Cookies** field still comes back empty you can click the **Shield** icon in the Firefox address bar on `home.nest.com`, toggle off **Enhanced Tracking Protection**, and restart the extraction.
 
 1. **⚠️ IMPORTANT**: Use a standard browsing window. Do **NOT** use Incognito/Private Mode, as third-party login cookies are restricted and you will face endless redirect loops during authentication.
 2. Click the extension icon in your browser toolbar.
@@ -68,6 +79,22 @@ Because this is an unsigned community build, you must enable Safari's developer 
 8. Use the "Copy" buttons next to the respective fields and paste them into your plugin/integration config.
 9. **DO NOT explicitly log out of the Nest portal**, as this will immediately kill the session tokens you just extracted. Simply close the tab.
 
+An extraction stops listening automatically 15 minutes after it starts. If you took longer than that, just click **Restart Extraction**.
+
+## Troubleshooting
+
+**The Nest tab does not open when I click the button.**
+Update to the latest release. Older versions aborted before opening the tab on Firefox, which also left the **Cookies** field empty.
+
+**The Cookies field stays empty (Firefox).**
+Make sure you are on the latest release, are not in a Private window, and are signing in with a Google account (legacy Nest accounts produce an **Access Token** instead, which is expected). If it is still empty, turn off Enhanced Tracking Protection for `home.nest.com` and restart the extraction.
+
+**Credentials work at first, then fail with `Invalid authentication` (Chrome/Edge).**
+This is Chromium's device-bound session security. Redo the extraction in Firefox or Safari; there is no workaround inside the extension.
+
+**The extension does not appear in Safari > Settings > Extensions.**
+Releases up to and including v1.0.2 were built with code signing turned off entirely, and macOS will not register an app extension that carries no signature at all — the app installs and launches, but nothing ever shows up in Safari (and **Add Temporary Extension...** stays greyed out for the `.appex`). Download the newest release, which is ad-hoc signed, delete the old copy from `/Applications`, and redo the Safari installation steps in order — the quarantine flag has to be cleared *before* the first launch. Also confirm **Allow unsigned extensions** is still checked; Safari clears it on every restart.
+
 ## Privacy & Permissions
 
 This extension requests the bare minimum permissions needed to function:
@@ -75,5 +102,7 @@ This extension requests the bare minimum permissions needed to function:
 - **cookies**: Required to capture the Google authentication `SID`, `SSID`, etc. markers.
 - **webRequest**: Required to silently intercept the OAuth tokens requested securely by Google.
 - **tabs**: To automatically spawn the authentication flow window.
+- **storage**: Holds the captured values in session memory so they survive the browser suspending the extension mid-login. Cleared when the browser closes.
+- **alarms**: Wakes the extension back up while it waits for you to finish signing in.
 
 **Data safety guarantee**: This extension runs entirely locally in your browser. None of your tokens or cookies are ever transmitted, tracked, or sent externally. All code is open-source.

@@ -3,6 +3,7 @@ name: Release Extension
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build-and-release:
@@ -14,8 +15,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Stamp manifests with the release version
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+            echo "No usable version in tag '$TAG'; keeping the version from the manifests."
+            exit 0
+          fi
+          for manifest in manifests/manifest.chrome.json manifests/manifest.firefox.json; do
+            jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp"
+            mv "$manifest.tmp" "$manifest"
+            echo "$manifest -> $VERSION"
+          done
+
       - name: Build Chrome Extension
         run: |
+          set -euo pipefail
           mkdir -p build/chrome
           cp -r src/* build/chrome/
           cp manifests/manifest.chrome.json build/chrome/manifest.json
@@ -24,6 +41,7 @@ jobs:
 
       - name: Build Firefox Extension
         run: |
+          set -euo pipefail
           mkdir -p build/firefox
           cp -r src/* build/firefox/
           cp manifests/manifest.firefox.json build/firefox/manifest.json
@@ -32,37 +50,84 @@ jobs:
 
       - name: Generate and Build Safari Extension
         run: |
+          set -euo pipefail
+
           # 1. Structure a temporary directory for conversion with a valid base manifest
           mkdir -p build/safari-source
           cp -r src/* build/safari-source/
           cp manifests/manifest.chrome.json build/safari-source/manifest.json
-          
+
           # 2. Run the conversion tool to build the raw Xcode workspace
           xcrun safari-web-extension-converter build/safari-source \
             --project-location safari-project \
             --app-name "Nest Token Extractor" \
-            --bundle-identifier "com.yourdomain.nesttokenextractor" \
+            --bundle-identifier "com.tronikos.nest-token-extractor" \
             --no-open \
             --swift \
             --macos-only \
             --force \
             --copy-resources
-          
-          # 3. Programmatically compile the generated app removing signing identities
+
+          # 3. Compile with an ad-hoc signature. macOS refuses to load an app
+          #    extension that carries no code signature at all, which is why a
+          #    build made with CODE_SIGNING_ALLOWED=NO installs but never shows
+          #    up in Safari > Settings > Extensions. Ad-hoc signing ("-") keeps
+          #    the bundle seal and the sandbox entitlements intact without
+          #    needing an Apple Developer account.
           xcodebuild -project "safari-project/Nest Token Extractor/Nest Token Extractor.xcodeproj" \
             -scheme "Nest Token Extractor" \
             -configuration Release \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=macOS" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
             SYMROOT="$(pwd)/build/safari-out" \
             clean build
-            
-          # 4. Navigate into build artifacts and zip the native mac app bundle
-          cd "build/safari-out/Release"
-          zip -r ../../../nest-token-extractor-safari.zip "Nest Token Extractor.app"
+
+      - name: Verify the Safari app bundle
+        run: |
+          set -euo pipefail
+          APP="build/safari-out/Release/Nest Token Extractor.app"
+          test -d "$APP"
+
+          # The containing app is useless without the extension bundle inside it.
+          APPEX="$(find "$APP/Contents/PlugIns" -maxdepth 1 -name '*.appex' -print -quit 2>/dev/null || true)"
+          if [ -z "$APPEX" ]; then
+            echo "::error::No .appex was embedded in the app bundle"
+            exit 1
+          fi
+          echo "Found extension: $APPEX"
+
+          # Safari silently ignores extensions whose signature does not validate.
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --display --verbose=4 "$APPEX"
+          codesign --display --entitlements - "$APPEX" || true
+
+      - name: Package the Safari app
+        run: |
+          set -euo pipefail
+          # ditto (not zip) preserves the bundle's symlinks, resource forks and
+          # code signature, so the extension still validates after unzipping.
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/safari-out/Release/Nest Token Extractor.app" \
+            nest-token-extractor-safari.zip
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nest-token-extractor
+          path: |
+            nest-token-extractor-chrome.zip
+            nest-token-extractor-firefox.zip
+            nest-token-extractor-safari.zip
 
       - name: Upload to release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |

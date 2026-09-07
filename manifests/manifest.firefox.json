@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Nest Token Extractor",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "Extracts authentication tokens and cookies for Nest and Google accounts for use with Home Assistant and Homebridge.",
-  "permissions": ["cookies", "webRequest", "tabs"],
+  "permissions": ["cookies", "webRequest", "tabs", "storage", "alarms"],
   "host_permissions": [
     "https://home.nest.com/*",
     "https://home.ft.nest.com/*",
@@ -19,7 +19,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "nest-token-extractor@tronikos",
-      "strict_min_version": "109.0"
+      "strict_min_version": "115.0"
     }
   }
 }

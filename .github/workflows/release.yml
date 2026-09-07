@@ -61,7 +61,7 @@ jobs:
           xcrun safari-web-extension-converter build/safari-source \
             --project-location safari-project \
             --app-name "Nest Token Extractor" \
-            --bundle-identifier "com.tronikos.nest-token-extractor" \
+            --bundle-identifier "com.tronikos.Nest-Token-Extractor" \
             --no-open \
             --swift \
             --macos-only \

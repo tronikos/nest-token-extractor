@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nest Token Extractor",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Extracts authentication tokens and cookies for Nest and Google accounts for use with Home Assistant and Homebridge.",
   "minimum_chrome_version": "102",
   "permissions": [
@@ -14,7 +14,8 @@
   "host_permissions": [
     "https://home.nest.com/*",
     "https://home.ft.nest.com/*",
-    "https://accounts.google.com/*"
+    "https://accounts.google.com/*",
+    "https://*.google.com/*"
   ],
   "background": {
     "service_worker": "background.js"

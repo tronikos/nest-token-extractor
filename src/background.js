@@ -1,14 +1,34 @@
 "use strict";
 
+// Firefox exposes promise-based APIs on "browser" and callback-based ones on
+// "chrome"; Chrome MV3 only has "chrome" (promise-based). Safari has both.
+// Preferring "browser" means every await below resolves to a real value on all
+// three browsers instead of silently awaiting undefined.
+const api = typeof browser !== "undefined" && browser.runtime ? browser : chrome;
+
 // Cookies that Google's OAuth endpoints rely on. Used as a fallback when the
 // browser does not expose the outgoing "Cookie" header to the extension
-// (e.g. Firefox's Enhanced Tracking Protection strips it in cross-origin frames).
+// (e.g. Firefox's Enhanced Tracking Protection strips it in cross-origin
+// frames, and Safari never reveals the Cookie header to webRequest at all).
 const FIRST_PARTY_AUTH_COOKIES = new Set([
   "SID", "HSID", "SSID", "APISID", "SAPISID",
   "__Secure-1PSID", "__Secure-3PSID",
   "__Secure-1PAPISID", "__Secure-3PAPISID",
   "__Secure-1PSIDTS", "__Secure-3PSIDTS",
 ]);
+
+// Without one of these the cookie string cannot authenticate anything, so a
+// harvest that lacks them is treated as partial and retried.
+const ESSENTIAL_AUTH_COOKIES = ["SID", "__Secure-3PSID", "__Secure-1PSID"];
+
+// Safari checks cookie reads against the cookie's own domain rather than the
+// URL it would be sent to, so the ".google.com" jar has to be queried directly
+// as well as through accounts.google.com.
+const COOKIE_QUERIES = [
+  { url: "https://accounts.google.com/" },
+  { url: "https://www.google.com/" },
+  { domain: "google.com" },
+];
 
 const DOMAINS = {
   prod: "https://home.nest.com",
@@ -29,6 +49,11 @@ const LISTEN_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_STATE = {
   issueToken: null,
   cookies: null,
+  // False while "cookies" holds a partial harvest that is still being retried.
+  cookiesComplete: false,
+  // True once "cookies" came from the request header, which outranks any
+  // later read of the cookie jar.
+  cookiesFromHeader: false,
   accessToken: null,
   listening: false,
   env: "prod",
@@ -43,7 +68,7 @@ let pollTimer = null;
 // start of this script.
 const ready = (async () => {
   try {
-    const stored = await chrome.storage.session.get("state");
+    const stored = await api.storage.session.get("state");
     if (stored && stored.state) state = { ...DEFAULT_STATE, ...stored.state };
   } catch (err) {
     // storage.session unavailable; fall back to in-memory state only.
@@ -67,7 +92,7 @@ function targetDomain() {
 
 async function persist() {
   try {
-    await chrome.storage.session.set({ state });
+    await api.storage.session.set({ state });
   } catch (err) {
     // Ignore: capture still works for the lifetime of this worker.
   }
@@ -79,7 +104,7 @@ async function startListening(env) {
   // The alarm both polls for the legacy session and revives the worker if the
   // browser shut it down mid-login.
   try {
-    await chrome.alarms.create(POLL_ALARM, { periodInMinutes: 0.5 });
+    await api.alarms.create(POLL_ALARM, { periodInMinutes: 0.5 });
   } catch (err) {
     // Ignore: the interval below still covers the common case.
   }
@@ -91,7 +116,7 @@ async function stopListening() {
   stopPolling();
   await persist();
   try {
-    await chrome.alarms.clear(POLL_ALARM);
+    await api.alarms.clear(POLL_ALARM);
   } catch (err) {
     // Ignore.
   }
@@ -104,8 +129,8 @@ function captureComplete() {
 function startPolling() {
   if (captureComplete()) return; // Nothing left to poll for.
   stopPolling();
-  pollTimer = setInterval(fetchSessionInfo, POLL_INTERVAL_MS);
-  fetchSessionInfo();
+  pollTimer = setInterval(pollTick, POLL_INTERVAL_MS);
+  pollTick();
 }
 
 function stopPolling() {
@@ -115,7 +140,7 @@ function stopPolling() {
   }
 }
 
-async function fetchSessionInfo() {
+async function pollTick() {
   if (!state.listening || captureComplete()) {
     stopPolling();
     return;
@@ -124,6 +149,15 @@ async function fetchSessionInfo() {
     await stopListening();
     return;
   }
+  // Once the OAuth request has been seen the account is signed in, so the
+  // cookie jar is worth re-reading: on browsers that hide the Cookie header
+  // this retry is what eventually completes the capture.
+  if (state.issueToken) await captureJarCookies();
+  await fetchSessionInfo();
+}
+
+async function fetchSessionInfo() {
+  if (!state.listening || captureComplete()) return;
   try {
     const response = await fetch(`${targetDomain()}/session`, {
       // The extension's own origin is not home.nest.com, so the session cookies
@@ -147,22 +181,60 @@ async function fetchSessionInfo() {
 // The Google pair is only overwritten until it is complete, so an unrelated
 // sign-in elsewhere in the browser cannot clobber a finished extraction.
 function googleCaptureDone() {
-  return Boolean(state.issueToken && state.cookies);
+  return Boolean(state.issueToken && state.cookies && state.cookiesComplete);
 }
 
 async function captureIssueToken(details) {
   await ready;
   if (!state.listening || googleCaptureDone()) return;
   if (!details.url.includes("action=issueToken")) return;
-  if (state.issueToken === details.url) return;
-  state.issueToken = details.url;
-  await persist();
+  if (state.issueToken !== details.url) {
+    state.issueToken = details.url;
+    await persist();
+  }
+  // onSendHeaders is the better cookie source but it does not fire everywhere
+  // (Safari never hands the Cookie header to webRequest), so read the jar here
+  // too rather than leaving the capture stuck on "waiting for cookies".
+  await captureJarCookies();
+  await markComplete();
+}
+
+// Reads the Google auth cookies straight out of the cookie jar. Several query
+// shapes are tried because browsers disagree about whether a cookie is matched
+// by the URL it is sent to or by its own domain.
+async function readAuthCookiesFromJar() {
+  const found = new Map();
+  for (const query of COOKIE_QUERIES) {
+    let cookies;
+    try {
+      cookies = await api.cookies.getAll(query);
+    } catch (err) {
+      continue; // Query shape unsupported or not permitted; try the next.
+    }
+    for (const c of cookies || []) {
+      if (FIRST_PARTY_AUTH_COOKIES.has(c.name) && !found.has(c.name)) {
+        found.set(c.name, c.value);
+      }
+    }
+  }
+  return found;
+}
+
+async function captureJarCookies() {
+  if (!state.listening || googleCaptureDone()) return;
+  const cookieMap = await readAuthCookiesFromJar();
+  // The jar can only ever produce the known auth cookies, so it is authoritative
+  // only when the session-defining ones are present.
+  await storeCookies(cookieMap, hasEssentialCookies(cookieMap), false);
   await markComplete();
 }
 
 async function captureRequestCookies(details) {
   await ready;
-  if (!state.listening || googleCaptureDone()) return;
+  // Unlike the other handlers this one still runs after the capture completes,
+  // as long as the completed value came from the jar: the header carries the
+  // full cookie set Google received and is worth upgrading to.
+  if (!state.listening || (googleCaptureDone() && state.cookiesFromHeader)) return;
   if (!details.url.includes("action=issueToken")) return;
 
   const cookieMap = new Map();
@@ -178,25 +250,33 @@ async function captureRequestCookies(details) {
       }
     }
   }
-
-  try {
-    const cookies = await chrome.cookies.getAll({ url: "https://accounts.google.com/" });
-    for (const c of cookies || []) {
-      if (FIRST_PARTY_AUTH_COOKIES.has(c.name) && !cookieMap.has(c.name)) {
-        cookieMap.set(c.name, c.value);
-      }
-    }
-  } catch (err) {
-    // Ignore: whatever the request header gave us is still usable.
+  // The header is the exact set Google itself received, so it completes the
+  // capture on its own; the jar only fills gaps it left behind.
+  const fromHeader = cookieMap.size > 0;
+  for (const [name, value] of await readAuthCookiesFromJar()) {
+    if (!cookieMap.has(name)) cookieMap.set(name, value);
   }
 
-  if (cookieMap.size === 0) return;
+  await storeCookies(cookieMap, fromHeader || hasEssentialCookies(cookieMap), fromHeader);
+  await markComplete();
+}
 
+function hasEssentialCookies(cookieMap) {
+  return ESSENTIAL_AUTH_COOKIES.some((name) => cookieMap.has(name));
+}
+
+// A partial harvest is still shown in the popup, but it never blocks a later
+// complete one from replacing it.
+async function storeCookies(cookieMap, complete, fromHeader) {
+  if (cookieMap.size === 0) return;
+  if (state.cookies && state.cookiesFromHeader && !fromHeader) return;
+  if (state.cookies && state.cookiesComplete && !complete) return;
   state.cookies = Array.from(cookieMap.entries())
     .map(([name, value]) => `${name}=${value}`)
     .join("; ");
+  state.cookiesComplete = complete;
+  state.cookiesFromHeader = Boolean(fromHeader);
   await persist();
-  await markComplete();
 }
 
 async function markComplete() {
@@ -206,7 +286,7 @@ async function markComplete() {
   // if the sign-in flow issues another token request.
   stopPolling();
   try {
-    await chrome.alarms.clear(POLL_ALARM);
+    await api.alarms.clear(POLL_ALARM);
   } catch (err) {
     // Ignore.
   }
@@ -215,8 +295,8 @@ async function markComplete() {
 
 async function setBadge(text, color) {
   try {
-    await chrome.action.setBadgeText({ text });
-    if (color) await chrome.action.setBadgeBackgroundColor({ color });
+    await api.action.setBadgeText({ text });
+    if (color) await api.action.setBadgeBackgroundColor({ color });
   } catch (err) {
     // Ignore: the badge is cosmetic.
   }
@@ -230,20 +310,24 @@ async function setBadge(text, color) {
 // "extraHeaders" is required by Chromium to see the Cookie request header but
 // is rejected by Firefox, where passing it throws and aborts the whole capture.
 const sendHeadersOptions = ["requestHeaders"];
-if (chrome.webRequest.OnSendHeadersOptions && chrome.webRequest.OnSendHeadersOptions.EXTRA_HEADERS) {
-  sendHeadersOptions.push(chrome.webRequest.OnSendHeadersOptions.EXTRA_HEADERS);
+if (api.webRequest.OnSendHeadersOptions && api.webRequest.OnSendHeadersOptions.EXTRA_HEADERS) {
+  sendHeadersOptions.push(api.webRequest.OnSendHeadersOptions.EXTRA_HEADERS);
 }
 
-chrome.webRequest.onBeforeRequest.addListener(captureIssueToken, OAUTH_FILTER);
+api.webRequest.onBeforeRequest.addListener(captureIssueToken, OAUTH_FILTER);
 try {
-  chrome.webRequest.onSendHeaders.addListener(captureRequestCookies, OAUTH_FILTER, sendHeadersOptions);
+  api.webRequest.onSendHeaders.addListener(captureRequestCookies, OAUTH_FILTER, sendHeadersOptions);
 } catch (err) {
-  // Retry without the Chromium-only option rather than losing cookie capture.
-  chrome.webRequest.onSendHeaders.addListener(captureRequestCookies, OAUTH_FILTER, ["requestHeaders"]);
+  try {
+    // Retry without the Chromium-only option rather than losing cookie capture.
+    api.webRequest.onSendHeaders.addListener(captureRequestCookies, OAUTH_FILTER, ["requestHeaders"]);
+  } catch (err2) {
+    // No header access at all; captureIssueToken's jar read still covers it.
+  }
 }
 
-if (chrome.alarms) {
-  chrome.alarms.onAlarm.addListener(async (alarm) => {
+if (api.alarms) {
+  api.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name !== POLL_ALARM) return;
     await ready;
     if (!state.listening || isExpired()) {
@@ -258,7 +342,7 @@ if (chrome.alarms) {
   });
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const action = message && message.action;
 
   if (action === "startCapture") {
@@ -268,7 +352,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await startListening(env);
       await setBadge("...", "#FF9800");
       try {
-        await chrome.tabs.create({ url: `${targetDomain()}/` });
+        await api.tabs.create({ url: `${targetDomain()}/` });
       } catch (err) {
         // The capture is already armed even if the tab could not be opened.
       }

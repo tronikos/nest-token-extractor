@@ -22,8 +22,11 @@ jobs:
           VERSION="${TAG#v}"
           if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
             echo "No usable version in tag '$TAG'; keeping the version from the manifests."
+            VERSION="$(jq -r .version manifests/manifest.chrome.json)"
+            echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
             exit 0
           fi
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
           for manifest in manifests/manifest.chrome.json manifests/manifest.firefox.json; do
             jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp"
             mv "$manifest.tmp" "$manifest"
@@ -81,6 +84,8 @@ jobs:
             ARCHS="arm64 x86_64" \
             MACOSX_DEPLOYMENT_TARGET=11.0 \
             ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$APP_VERSION" \
+            CURRENT_PROJECT_VERSION="$APP_VERSION" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=YES \
@@ -103,6 +108,17 @@ jobs:
             exit 1
           fi
           echo "Found extension: $APPEX"
+
+          # The converter defaults every bundle to 1.0, which makes it
+          # impossible to tell which release someone has installed.
+          for plist in "$APP/Contents/Info.plist" "$APPEX/Contents/Info.plist"; do
+            GOT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+            if [ "$GOT" != "$APP_VERSION" ]; then
+              echo "::error::$plist reports version $GOT, expected $APP_VERSION"
+              exit 1
+            fi
+            echo "$plist -> $GOT"
+          done
 
           # Safari silently ignores extensions whose signature does not validate.
           codesign --verify --deep --strict --verbose=2 "$APP"

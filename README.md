@@ -11,11 +11,23 @@ Supports major custom components and plugins including:
 
 ## Features
 
-- **Multi-Browser Support**: Works identically on Google Chrome, Mozilla Firefox, and Apple Safari.
+- **Multi-Browser Support**: Runs on Google Chrome, Mozilla Firefox, and Apple Safari. **Use Firefox for Google accounts** — see the browser table below.
 - **Google Accounts Support**: Automatically extracts both `issueToken` and `cookies` values.
 - **Legacy Nest Accounts Support**: Directly fetches the legacy `access_token` session token.
 - **Field Test Environment**: Easily toggle between Production (`home.nest.com`) and Field Test (`home.ft.nest.com`).
 - **Isolated Fields**: Outputs raw, unencoded fields so you can extract exactly what you need.
+
+## Which browser should I use?
+
+| | Google account | Legacy Nest account |
+|---|---|---|
+| **Firefox** | ✅ Recommended | ✅ |
+| **Safari** | ❌ Not possible — see below | ✅ |
+| **Chrome / Edge** | ⚠️ Extracts, but the credentials stop working | ✅ |
+
+Safari cannot extract Google credentials, and this cannot be fixed from inside the extension. Google's session cookies (`HSID`, `SSID`, `__Secure-3PSID`, …) are `HttpOnly`, and [WebKit does not expose `HttpOnly` cookies to web extensions](https://developer.apple.com/forums/thread/657931) through either the `cookies` API or the `Cookie` request header. The extension detects Safari and says so rather than waiting forever. Legacy Nest accounts are unaffected, because those produce an Access Token that never involves cookies.
+
+Chrome and Edge bind Google session cookies to the hardware profile (DBSC), so what they extract authenticates at first and then fails.
 
 ## Installation
 
@@ -52,7 +64,7 @@ This is an ad-hoc signed community build, so macOS quarantines it on download an
 4. Open Safari and go to **Safari > Settings > Advanced** and check **Show features for web developers**.
 5. Go to **Safari > Settings > Developer** and check **Allow unsigned extensions** (you will be asked for your password).
 6. Go to **Safari > Settings > Extensions** and enable the checkbox next to **Nest Token Extractor**.
-7. With the extension selected, set its website access for `nest.com` and `google.com` to **Allow**. Safari grants no host access by default, and the extension cannot read the Google authentication cookies without it.
+7. With the extension selected, set its website access for the listed sites to **Allow**. Safari grants no host access by default. Note that a Google account still will not work in Safari even with access granted — see [Which browser should I use?](#which-browser-should-i-use) above.
 
 > [!IMPORTANT]
 > macOS resets **Allow unsigned extensions** every time Safari restarts. If the extension disappears from the toolbar after quitting Safari, re-check that box (step 5) and the extension comes back — you do not need to reinstall it.
@@ -65,7 +77,7 @@ This is an ad-hoc signed community build, so macOS quarantines it on download an
 > [!WARNING]
 > **⚠️ CRITICAL BROWSER WARNING (Google Chrome):**
 > Do **NOT** use Google Chrome or Microsoft Edge to extract cookies for Google Accounts. Modern Chromium-based browsers use aggressive, hardware-bound session security (Device Bound Session Credentials / DBSC) with Google. Cookies extracted via Chrome are cryptographically bound to the Chrome hardware profile and will fail with `Invalid authentication` in Python/Home Assistant or Homebridge.
-> **You MUST use Firefox or Safari** to run this extraction and get a long-lived, portable cookie.
+> **You MUST use Firefox** to run this extraction and get a long-lived, portable cookie. Safari cannot do it either, for a different reason — see [Which browser should I use?](#which-browser-should-i-use).
 
 > [!TIP]
 > **💡 FIREFOX ENHANCED TRACKING PROTECTION:**
@@ -94,10 +106,10 @@ Update to the latest release. Older versions aborted before opening the tab on F
 Make sure you are on the latest release, are not in a Private window, and are signing in with a Google account (legacy Nest accounts produce an **Access Token** instead, which is expected). If it is still empty, turn off Enhanced Tracking Protection for `home.nest.com` and restart the extraction.
 
 **It stops at "Issue Token captured, still waiting for cookies" (Safari).**
-Safari never exposes the outgoing `Cookie` header to extensions, so the cookies have to be read from the cookie jar instead — and Safari only allows that if the extension has been granted access to `google.com` itself, not just `accounts.google.com`. Update to the latest release, then open **Safari > Settings > Extensions**, select **Nest Token Extractor**, and set both `nest.com` and `google.com` to **Allow** (or use **Always Allow on Every Website**). Restart the extraction afterwards.
+This is a WebKit limitation with no workaround: Google's session cookies are `HttpOnly`, and Safari exposes `HttpOnly` cookies to extensions through neither the `cookies` API nor the `Cookie` request header. Granting more site access does not help. Redo the extraction in Firefox. Extensions from v1.0.6 onward tell you this up front instead of waiting.
 
 **Credentials work at first, then fail with `Invalid authentication` (Chrome/Edge).**
-This is Chromium's device-bound session security. Redo the extraction in Firefox or Safari; there is no workaround inside the extension.
+This is Chromium's device-bound session security. Redo the extraction in Firefox; there is no workaround inside the extension.
 
 **The extension does not appear in Safari > Settings > Extensions.**
 Releases up to and including v1.0.2 were built with code signing turned off entirely, and macOS will not register an app extension that carries no signature at all — the app installs and launches, but nothing ever shows up in Safari (and **Add Temporary Extension...** stays greyed out for the `.appex`). Download the newest release, which is ad-hoc signed, delete the old copy from `/Applications`, and redo the Safari installation steps in order — the quarantine flag has to be cleared *before* the first launch. Also confirm **Allow unsigned extensions** is still checked; Safari clears it on every restart. If it is checked and the extension is still missing, Safari has simply not redrawn its list — rename `Nest Token Extractor.app` in the Finder while the Extensions pane is open to force a refresh, then rename it back.
@@ -107,7 +119,6 @@ Releases up to and including v1.0.2 were built with code signing turned off enti
 This extension requests the bare minimum permissions needed to function:
 
 - **cookies**: Required to capture the Google authentication `SID`, `SSID`, etc. markers. Only that fixed list of Google auth cookie names is ever read.
-- **Access to `google.com`**: Those cookies are stored on the `.google.com` domain, and Safari refuses to hand them over unless the extension holds access to that domain rather than only `accounts.google.com`.
 - **webRequest**: Required to silently intercept the OAuth tokens requested securely by Google.
 - **tabs**: To automatically spawn the authentication flow window.
 - **storage**: Holds the captured values in session memory so they survive the browser suspending the extension mid-login. Cleared when the browser closes.

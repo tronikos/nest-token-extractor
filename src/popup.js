@@ -8,6 +8,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const chromeWarning = document.getElementById("chrome_warning");
   const firefoxWarning = document.getElementById("firefox_warning");
+  const safariWarning = document.getElementById("safari_warning");
 
   const googleSection = document.getElementById("google_section");
   const issueTokenField = document.getElementById("issue_token");
@@ -22,10 +23,14 @@ document.addEventListener("DOMContentLoaded", () => {
   // their user agent, so they have to be ruled out first.
   const userAgent = navigator.userAgent.toLowerCase();
   const isChromium = /chrome|chromium|edg\//.test(userAgent);
-  if (userAgent.includes("firefox")) {
+  const isFirefox = userAgent.includes("firefox");
+  const isSafari = !isChromium && !isFirefox && userAgent.includes("safari");
+  if (isFirefox) {
     firefoxWarning.style.display = "block";
   } else if (isChromium) {
     chromeWarning.style.display = "block";
+  } else if (isSafari) {
+    safariWarning.style.display = "block";
   }
 
   function setStatus(msg, type) {
@@ -88,11 +93,20 @@ document.addEventListener("DOMContentLoaded", () => {
       extractBtn.textContent = "Restart Extraction";
       envSelect.disabled = false;
       closeWarning.style.display = "block";
-      if (data.issueToken && !data.cookies) {
-        setStatus(
-          "Issue Token captured, still waiting for cookies. Keep the Nest tab open.",
-          "info"
-        );
+      if (data.issueToken && !data.cookiesComplete) {
+        if (isSafari) {
+          setStatus(
+            "Issue Token captured, but Safari cannot read Google's HttpOnly session " +
+              "cookies, so this extraction cannot finish. Redo it in Firefox.",
+            "danger"
+          );
+          stopPolling();
+        } else {
+          setStatus(
+            "Issue Token captured, still waiting for cookies. Keep the Nest tab open.",
+            "info"
+          );
+        }
       } else {
         setStatus("Credentials captured! Copy the needed fields below.", "success");
         if (!data.listening) stopPolling();

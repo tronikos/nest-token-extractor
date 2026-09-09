@@ -17,16 +17,18 @@ const FIRST_PARTY_AUTH_COOKIES = new Set([
   "__Secure-1PSIDTS", "__Secure-3PSIDTS",
 ]);
 
-// Without one of these the cookie string cannot authenticate anything, so a
-// harvest that lacks them is treated as partial and retried.
-const ESSENTIAL_AUTH_COOKIES = ["SID", "__Secure-3PSID", "__Secure-1PSID"];
+// Every one of these is HttpOnly. Requiring at least one proves the capture got
+// real cookie access rather than only the subset that JavaScript can see: Safari
+// never hands HttpOnly cookies to extensions, so there it yields cookies like
+// SID and SAPISID but none of these, which authenticates nothing. A harvest
+// without one of them is treated as partial and retried rather than reported as
+// a finished extraction.
+const ESSENTIAL_AUTH_COOKIES = ["HSID", "SSID", "__Secure-1PSID", "__Secure-3PSID"];
 
-// Safari checks cookie reads against the cookie's own domain rather than the
-// URL it would be sent to, so the ".google.com" jar has to be queried directly
-// as well as through accounts.google.com.
+// Browsers disagree about whether a cookie is matched by the URL it would be
+// sent to or by its own domain, so both shapes are tried.
 const COOKIE_QUERIES = [
   { url: "https://accounts.google.com/" },
-  { url: "https://www.google.com/" },
   { domain: "google.com" },
 ];
 
@@ -368,6 +370,9 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({
         issueToken: state.issueToken,
         cookies: state.cookies,
+        // The popup needs this to tell a finished capture apart from a partial
+        // one that is missing the session-defining cookies.
+        cookiesComplete: state.cookiesComplete,
         accessToken: state.accessToken,
         listening: state.listening,
       });

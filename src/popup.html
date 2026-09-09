@@ -22,6 +22,7 @@
   }
   .status.info { background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
   .status.success { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
+  .status.danger { background: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
   
   .section {
     background: #f9f9f9;
@@ -104,11 +105,15 @@
 
   <!-- Browser Alert Banners -->
   <div id="chrome_warning" class="alert-banner danger">
-    <b>⚠️ CRITICAL WARNING FOR GOOGLE CHROME:</b> Google Chrome utilizes hardware-bound session security (DBSC) for Google Accounts. Credentials extracted here using Chrome <b>will fail</b> in Home Assistant either immediately or after a few hours. Please use <b>Firefox</b> or <b>Safari</b> instead.
+    <b>⚠️ CRITICAL WARNING FOR GOOGLE CHROME:</b> Google Chrome utilizes hardware-bound session security (DBSC) for Google Accounts. Credentials extracted here using Chrome <b>will fail</b> in Home Assistant either immediately or after a few hours. Please use <b>Firefox</b> instead.
   </div>
 
   <div id="firefox_warning" class="alert-banner warning">
     <b>💡 NOTE FOR FIREFOX USERS:</b> If you encounter an empty Cookies field, ensure you have clicked the shield icon in the Firefox address bar on <b>home.nest.com</b> and turned off <b>Enhanced Tracking Protection</b>. This allows Google's session cookies to be securely extracted.
+  </div>
+
+  <div id="safari_warning" class="alert-banner danger">
+    <b>⚠️ GOOGLE ACCOUNTS DO NOT WORK IN SAFARI:</b> WebKit does not expose <code>HttpOnly</code> cookies to extensions, and Google's session cookies are <code>HttpOnly</code>, so the <b>Cookies</b> field can never be filled in here. Use <b>Firefox</b> for a Google account. Legacy Nest accounts still work in Safari, since those produce an Access Token instead.
   </div>
 
   <div class="field-group">

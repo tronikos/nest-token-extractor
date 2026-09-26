@@ -109,7 +109,7 @@
   </div>
 
   <div id="firefox_warning" class="alert-banner warning">
-    <b>💡 NOTE FOR FIREFOX USERS:</b> If you encounter an empty Cookies field, ensure you have clicked the shield icon in the Firefox address bar on <b>home.nest.com</b> and turned off <b>Enhanced Tracking Protection</b>. This allows Google's session cookies to be securely extracted.
+    <b>💡 NOTE FOR FIREFOX USERS:</b> For a Google account, run the extraction in a <b>private window</b> and close that window once you have copied the values. If the Cookies field stays empty, click the shield icon in the Firefox address bar on <b>home.nest.com</b> and turn off <b>Enhanced Tracking Protection</b>.
   </div>
 
   <div id="safari_warning" class="alert-banner danger">
@@ -158,7 +158,7 @@
     </div>
   </div>
   
-  <span class="warning" style="display: none;" id="close_warning"><b>IMPORTANT:</b> Do not explicitly log out when finished! Just close the tab, otherwise your token will be invalidated immediately.</span>
+  <span class="warning" style="display: none;" id="close_warning"><b>IMPORTANT:</b> Do not log out when finished, or the credentials stop working immediately. Close the window instead, so the browser stops using this session.</span>
 
   <script src="popup.js"></script>
 </body>

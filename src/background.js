@@ -15,6 +15,9 @@ const FIRST_PARTY_AUTH_COOKIES = new Set([
   "__Secure-1PSID", "__Secure-3PSID",
   "__Secure-1PAPISID", "__Secure-3PAPISID",
   "__Secure-1PSIDTS", "__Secure-3PSIDTS",
+  // Google rotates these on every token request, and homebridge-nest-accfactory
+  // reports that authentication fails without SIDCC.
+  "SIDCC", "__Secure-1PSIDCC", "__Secure-3PSIDCC",
 ]);
 
 // Every one of these is HttpOnly. Requiring at least one proves the capture got
@@ -60,6 +63,10 @@ const DEFAULT_STATE = {
   listening: false,
   env: "prod",
   startedAt: 0,
+  // Cookie store of the window the sign-in happens in. A private window, a
+  // Firefox container or a Chrome Incognito window each has its own store, and
+  // reading the default one would return the cookies of a different session.
+  cookieStoreId: null,
 };
 
 let state = { ...DEFAULT_STATE };
@@ -154,7 +161,7 @@ async function pollTick() {
   // Once the OAuth request has been seen the account is signed in, so the
   // cookie jar is worth re-reading: on browsers that hide the Cookie header
   // this retry is what eventually completes the capture.
-  if (state.issueToken) await captureJarCookies();
+  if (state.issueToken) await captureJarCookies(state.cookieStoreId);
   await fetchSessionInfo();
 }
 
@@ -186,10 +193,38 @@ function googleCaptureDone() {
   return Boolean(state.issueToken && state.cookies && state.cookiesComplete);
 }
 
+// Returns the ID of the cookie store a tab uses, or null if the browser does
+// not say. Firefox puts it on the tab itself; Chrome only lists which tabs
+// belong to which store.
+async function cookieStoreIdForTab(tabId, cookieStoreId) {
+  if (cookieStoreId) return cookieStoreId;
+  if (typeof tabId !== "number" || tabId < 0) return null;
+  try {
+    const stores = await api.cookies.getAllCookieStores();
+    const store = (stores || []).find((s) => (s.tabIds || []).includes(tabId));
+    return store ? store.id : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// The store of the window a request came from, remembered so that the jar
+// retries in pollTick read the same session.
+async function cookieStoreIdForRequest(details) {
+  const storeId =
+    (await cookieStoreIdForTab(details.tabId, details.cookieStoreId)) || state.cookieStoreId;
+  if (storeId && storeId !== state.cookieStoreId) {
+    state.cookieStoreId = storeId;
+    await persist();
+  }
+  return storeId;
+}
+
 async function captureIssueToken(details) {
   await ready;
   if (!state.listening || googleCaptureDone()) return;
   if (!details.url.includes("action=issueToken")) return;
+  const storeId = await cookieStoreIdForRequest(details);
   if (state.issueToken !== details.url) {
     state.issueToken = details.url;
     await persist();
@@ -197,16 +232,18 @@ async function captureIssueToken(details) {
   // onSendHeaders is the better cookie source but it does not fire everywhere
   // (Safari never hands the Cookie header to webRequest), so read the jar here
   // too rather than leaving the capture stuck on "waiting for cookies".
-  await captureJarCookies();
+  await captureJarCookies(storeId);
   await markComplete();
 }
 
-// Reads the Google auth cookies straight out of the cookie jar. Several query
-// shapes are tried because browsers disagree about whether a cookie is matched
-// by the URL it is sent to or by its own domain.
-async function readAuthCookiesFromJar() {
+// Reads the Google auth cookies straight out of the cookie jar of the given
+// store (the default one if null). Several query shapes are tried because
+// browsers disagree about whether a cookie is matched by the URL it is sent to
+// or by its own domain.
+async function readAuthCookiesFromJar(storeId) {
   const found = new Map();
-  for (const query of COOKIE_QUERIES) {
+  for (const shape of COOKIE_QUERIES) {
+    const query = storeId ? { ...shape, storeId } : shape;
     let cookies;
     try {
       cookies = await api.cookies.getAll(query);
@@ -222,9 +259,9 @@ async function readAuthCookiesFromJar() {
   return found;
 }
 
-async function captureJarCookies() {
+async function captureJarCookies(storeId) {
   if (!state.listening || googleCaptureDone()) return;
-  const cookieMap = await readAuthCookiesFromJar();
+  const cookieMap = await readAuthCookiesFromJar(storeId);
   // The jar can only ever produce the known auth cookies, so it is authoritative
   // only when the session-defining ones are present.
   await storeCookies(cookieMap, hasEssentialCookies(cookieMap), false);
@@ -238,6 +275,7 @@ async function captureRequestCookies(details) {
   // full cookie set Google received and is worth upgrading to.
   if (!state.listening || (googleCaptureDone() && state.cookiesFromHeader)) return;
   if (!details.url.includes("action=issueToken")) return;
+  const storeId = await cookieStoreIdForRequest(details);
 
   const cookieMap = new Map();
   const cookieHeader = (details.requestHeaders || []).find(
@@ -255,7 +293,7 @@ async function captureRequestCookies(details) {
   // The header is the exact set Google itself received, so it completes the
   // capture on its own; the jar only fills gaps it left behind.
   const fromHeader = cookieMap.size > 0;
-  for (const [name, value] of await readAuthCookiesFromJar()) {
+  for (const [name, value] of await readAuthCookiesFromJar(storeId)) {
     if (!cookieMap.has(name)) cookieMap.set(name, value);
   }
 
@@ -354,7 +392,11 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await startListening(env);
       await setBadge("...", "#FF9800");
       try {
-        await api.tabs.create({ url: `${targetDomain()}/` });
+        const tab = await api.tabs.create({ url: `${targetDomain()}/` });
+        // Known before sign-in, so even the first jar reads use the store of
+        // the window the sign-in happens in.
+        state.cookieStoreId = await cookieStoreIdForTab(tab.id, tab.cookieStoreId);
+        await persist();
       } catch (err) {
         // The capture is already armed even if the tab could not be opened.
       }

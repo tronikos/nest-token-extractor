@@ -51,6 +51,31 @@ jobs:
           cd build/firefox
           zip -r ../../nest-token-extractor-firefox.zip .
 
+      - name: Sign Firefox Extension
+        # AMO signs each version only once, so a manual re-run of an already
+        # released version would fail here; only sign for new releases.
+        if: github.event_name == 'release'
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          # Unlisted: AMO signs the add-on for self-distribution without
+          # publishing it on addons.mozilla.org. Release Firefox refuses to
+          # install unsigned add-ons other than temporary ones.
+          npx --yes web-ext@10 sign \
+            --source-dir build/firefox \
+            --artifacts-dir build/firefox-signed \
+            --channel unlisted \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET"
+          XPI="$(find build/firefox-signed -maxdepth 1 -name '*.xpi' -print -quit)"
+          if [ -z "$XPI" ]; then
+            echo "::error::web-ext sign did not produce an .xpi"
+            exit 1
+          fi
+          mv "$XPI" nest-token-extractor-firefox.xpi
+
       - name: Generate and Build Safari Extension
         run: |
           set -euo pipefail
@@ -141,6 +166,7 @@ jobs:
           path: |
             nest-token-extractor-chrome.zip
             nest-token-extractor-firefox.zip
+            nest-token-extractor-firefox.xpi
             nest-token-extractor-safari.zip
 
       - name: Upload to release
@@ -150,4 +176,5 @@ jobs:
           files: |
             nest-token-extractor-chrome.zip
             nest-token-extractor-firefox.zip
+            nest-token-extractor-firefox.xpi
             nest-token-extractor-safari.zip

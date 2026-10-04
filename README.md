@@ -31,7 +31,7 @@ Chrome and Edge bind Google session cookies to the hardware profile (DBSC), so w
 
 ## Installation
 
-Download the respective zip file for your browser from the [Releases page](https://github.com/tronikos/nest-token-extractor/releases/latest).
+Download the file for your browser from the [Releases page](https://github.com/tronikos/nest-token-extractor/releases/latest).
 
 ### Google Chrome (and Chromium browsers)
 
@@ -44,12 +44,19 @@ Download the respective zip file for your browser from the [Releases page](https
 
 Requires Firefox 115 or newer.
 
+`nest-token-extractor-firefox.xpi` is signed by Mozilla (distributed outside addons.mozilla.org), so it installs like any other add-on:
+
+1. Download `nest-token-extractor-firefox.xpi`.
+2. Open `about:addons`, click the gear icon and choose **Install Add-on From File...**, then select the downloaded file.
+3. In the install prompt, tick **Allow extension to run in private windows**. You need it there for Google accounts. If you missed it, select **Nest Token Extractor** in `about:addons` and set **Run in Private Windows** to **Allow**.
+
+Opening `nest-token-extractor-firefox.zip` the same way fails with "This add-on could not be installed because it has not been verified", because the zip is unsigned. You can still load it as a temporary add-on, which Firefox removes when it restarts:
+
 1. Unzip `nest-token-extractor-firefox.zip`.
 2. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`.
 3. Click **Load Temporary Add-on...**
 4. Select the `manifest.json` file inside the unzipped folder (not `manifest.firefox.json` from the source tree).
-
-Firefox removes temporary add-ons when it restarts, which is fine since you only need the extension while extracting. To use it in a private window, open `about:addons`, select **Nest Token Extractor** and set **Run in Private Windows** to **Allow** if it isn't already.
+5. To use it in a private window, open `about:addons`, select **Nest Token Extractor** and set **Run in Private Windows** to **Allow** if it isn't already.
 
 ### Apple Safari (macOS)
 

@@ -71,6 +71,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function updateUI(data) {
+    if (data.env) {
+      envSelect.value = data.env;
+    }
     let foundSomething = false;
 
     // Display Google data if available
@@ -93,7 +96,7 @@ document.addEventListener("DOMContentLoaded", () => {
       extractBtn.textContent = "Restart Extraction";
       envSelect.disabled = false;
       closeWarning.style.display = "block";
-      if (data.issueToken && !data.cookiesComplete) {
+      if (!data.accessToken && (!data.issueToken || !data.cookiesComplete)) {
         if (isSafari) {
           setStatus(
             "Issue Token captured, but Safari cannot read Google's HttpOnly session " +
@@ -101,6 +104,11 @@ document.addEventListener("DOMContentLoaded", () => {
             "danger"
           );
           stopPolling();
+        } else if (!data.issueToken) {
+          setStatus(
+            "Cookies captured, still waiting for Issue Token. Keep the Nest tab open.",
+            "info"
+          );
         } else {
           setStatus(
             "Issue Token captured, still waiting for cookies. Keep the Nest tab open.",

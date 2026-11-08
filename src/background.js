@@ -67,6 +67,7 @@ const DEFAULT_STATE = {
   // Firefox container or a Chrome Incognito window each has its own store, and
   // reading the default one would return the cookies of a different session.
   cookieStoreId: null,
+  incognito: false,
 };
 
 let state = { ...DEFAULT_STATE };
@@ -107,9 +108,7 @@ async function persist() {
   }
 }
 
-async function startListening(env) {
-  state = { ...DEFAULT_STATE, listening: true, env, startedAt: Date.now() };
-  await persist();
+async function startListening() {
   // The alarm both polls for the legacy session and revives the worker if the
   // browser shut it down mid-login.
   try {
@@ -165,8 +164,28 @@ async function pollTick() {
   await fetchSessionInfo();
 }
 
+function usesDefaultCookieStore() {
+  if (state.incognito) return false;
+  if (!state.cookieStoreId) return true;
+  return (
+    state.cookieStoreId === "0" ||
+    state.cookieStoreId === "firefox-default" ||
+    state.cookieStoreId === "default"
+  );
+}
+
 async function fetchSessionInfo() {
-  if (!state.listening || captureComplete()) return;
+  // Background fetch() always sends cookies from the browser's default
+  // (non-private) cookie store, so skip it when extracting in a private window
+  // or container, or once a Google OAuth token request has been seen.
+  if (
+    !state.listening ||
+    captureComplete() ||
+    state.issueToken ||
+    !usesDefaultCookieStore()
+  ) {
+    return;
+  }
   try {
     const response = await fetch(`${targetDomain()}/session`, {
       // The extension's own origin is not home.nest.com, so the session cookies
@@ -209,10 +228,14 @@ async function cookieStoreIdForTab(tabId, cookieStoreId) {
 }
 
 // The store of the window a request came from, remembered so that the jar
-// retries in pollTick read the same session.
+// retries in pollTick read the same session. Returns null when a request comes
+// from a different cookie store than the window being extracted.
 async function cookieStoreIdForRequest(details) {
-  const storeId =
-    (await cookieStoreIdForTab(details.tabId, details.cookieStoreId)) || state.cookieStoreId;
+  const reqStoreId = await cookieStoreIdForTab(details.tabId, details.cookieStoreId);
+  if (state.cookieStoreId && reqStoreId && reqStoreId !== state.cookieStoreId) {
+    return null;
+  }
+  const storeId = reqStoreId || state.cookieStoreId;
   if (storeId && storeId !== state.cookieStoreId) {
     state.cookieStoreId = storeId;
     await persist();
@@ -225,6 +248,7 @@ async function captureIssueToken(details) {
   if (!state.listening || googleCaptureDone()) return;
   if (!details.url.includes("action=issueToken")) return;
   const storeId = await cookieStoreIdForRequest(details);
+  if (state.cookieStoreId && !storeId) return;
   if (state.issueToken !== details.url) {
     state.issueToken = details.url;
     await persist();
@@ -276,6 +300,7 @@ async function captureRequestCookies(details) {
   if (!state.listening || (googleCaptureDone() && state.cookiesFromHeader)) return;
   if (!details.url.includes("action=issueToken")) return;
   const storeId = await cookieStoreIdForRequest(details);
+  if (state.cookieStoreId && !storeId) return;
 
   const cookieMap = new Map();
   const cookieHeader = (details.requestHeaders || []).find(
@@ -389,17 +414,19 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       await ready;
       const env = message.env === "ft" ? "ft" : "prod";
-      await startListening(env);
+      state = { ...DEFAULT_STATE, listening: true, env, startedAt: Date.now() };
       await setBadge("...", "#FF9800");
       try {
         const tab = await api.tabs.create({ url: `${targetDomain()}/` });
-        // Known before sign-in, so even the first jar reads use the store of
-        // the window the sign-in happens in.
+        // Known before sign-in, so even the first jar reads and poll ticks use
+        // the store of the window the sign-in happens in.
         state.cookieStoreId = await cookieStoreIdForTab(tab.id, tab.cookieStoreId);
-        await persist();
+        state.incognito = Boolean(tab && tab.incognito);
       } catch (err) {
         // The capture is already armed even if the tab could not be opened.
       }
+      await persist();
+      await startListening();
       sendResponse({ status: "started" });
     })();
     return true;
@@ -417,6 +444,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         cookiesComplete: state.cookiesComplete,
         accessToken: state.accessToken,
         listening: state.listening,
+        env: state.env,
       });
     })();
     return true;

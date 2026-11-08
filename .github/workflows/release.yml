@@ -164,10 +164,8 @@ jobs:
         with:
           name: nest-token-extractor
           path: |
-            nest-token-extractor-chrome.zip
-            nest-token-extractor-firefox.zip
-            nest-token-extractor-firefox.xpi
-            nest-token-extractor-safari.zip
+            nest-token-extractor-*.zip
+            nest-token-extractor-*.xpi
 
       - name: Upload to release
         if: github.event_name == 'release'

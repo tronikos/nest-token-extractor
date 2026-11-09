@@ -20,19 +20,20 @@ const FIRST_PARTY_AUTH_COOKIES = new Set([
   "SIDCC", "__Secure-1PSIDCC", "__Secure-3PSIDCC",
 ]);
 
-// Every one of these is HttpOnly. Requiring at least one proves the capture got
-// real cookie access rather than only the subset that JavaScript can see: Safari
-// never hands HttpOnly cookies to extensions, so there it yields cookies like
-// SID and SAPISID but none of these, which authenticates nothing. A harvest
-// without one of them is treated as partial and retried rather than reported as
-// a finished extraction.
+// Every one of these is HttpOnly and scoped to .google.com. Requiring at least
+// one proves the capture got full cookie access rather than only non-HttpOnly
+// or accounts.google.com cookies (e.g. on Safari < 18, or in Safari when the
+// extension has not been granted access to google.com). A harvest without one
+// of them is treated as partial and retried rather than reported as finished.
 const ESSENTIAL_AUTH_COOKIES = ["HSID", "SSID", "__Secure-1PSID", "__Secure-3PSID"];
 
 // Browsers disagree about whether a cookie is matched by the URL it would be
 // sent to or by its own domain, so both shapes are tried.
 const COOKIE_QUERIES = [
   { url: "https://accounts.google.com/" },
+  { url: "https://www.google.com/" },
   { domain: "google.com" },
+  { domain: ".google.com" },
 ];
 
 const DOMAINS = {

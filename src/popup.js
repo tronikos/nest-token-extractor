@@ -97,16 +97,15 @@ document.addEventListener("DOMContentLoaded", () => {
       envSelect.disabled = false;
       closeWarning.style.display = "block";
       if (!data.accessToken && (!data.issueToken || !data.cookiesComplete)) {
-        if (isSafari) {
-          setStatus(
-            "Issue Token captured, but Safari cannot read Google's HttpOnly session " +
-              "cookies, so this extraction cannot finish. Redo it in Firefox.",
-            "danger"
-          );
-          stopPolling();
-        } else if (!data.issueToken) {
+        if (!data.issueToken) {
           setStatus(
             "Cookies captured, still waiting for Issue Token. Keep the Nest tab open.",
+            "info"
+          );
+        } else if (isSafari) {
+          setStatus(
+            "Issue Token captured, waiting for Google cookies. Make sure you are on Safari 18+ " +
+              "and granted website access to google.com in Safari > Settings > Extensions.",
             "info"
           );
         } else {

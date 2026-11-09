@@ -11,7 +11,7 @@ Supports major custom components and plugins including:
 
 ## Features
 
-- **Multi-Browser Support**: Runs on Google Chrome, Mozilla Firefox, and Apple Safari. **Use Firefox for Google accounts** — see the browser table below.
+- **Multi-Browser Support**: Runs on Google Chrome, Mozilla Firefox, and Apple Safari. **Use Firefox or Safari 18+ for Google accounts** — see the browser table below.
 - **Google Accounts Support**: Automatically extracts both `issueToken` and `cookies` values.
 - **Legacy Nest Accounts Support**: Directly fetches the legacy `access_token` session token.
 - **Field Test Environment**: Easily toggle between Production (`home.nest.com`) and Field Test (`home.ft.nest.com`).
@@ -22,10 +22,11 @@ Supports major custom components and plugins including:
 | | Google account | Legacy Nest account |
 |---|---|---|
 | **Firefox** | ✅ Recommended | ✅ |
-| **Safari** | ❌ Not possible — see below | ✅ |
+| **Safari 18+** | ✅ Supported (requires website access to `google.com`) | ✅ |
+| **Safari < 18** | ❌ Not supported (no `HttpOnly` cookie access) | ✅ |
 | **Chrome / Edge** | ⚠️ Extracts, but the credentials stop working | ✅ |
 
-Safari cannot extract Google credentials, and this cannot be fixed from inside the extension. Google's session cookies (`HSID`, `SSID`, `__Secure-3PSID`, …) are `HttpOnly`, and [WebKit does not expose `HttpOnly` cookies to web extensions](https://developer.apple.com/forums/thread/657931) through either the `cookies` API or the `Cookie` request header. The extension detects Safari and says so rather than waiting forever. Legacy Nest accounts are unaffected, because those produce an Access Token that never involves cookies.
+Safari 18.0 and newer support reading Google's `HttpOnly` session cookies (`HSID`, `SSID`, `__Secure-3PSID`, …) via the WebExtensions `cookies` API, provided you grant the extension access to `google.com` and `nest.com` in **Safari > Settings > Extensions**. Older Safari versions (< 18) do not expose `HttpOnly` cookies to extensions and only work with Legacy Nest accounts.
 
 Chrome and Edge bind Google session cookies to the hardware profile (DBSC), so what they extract authenticates at first and then fails within a few hours. Incognito windows are affected too.
 
@@ -73,7 +74,7 @@ This is an ad-hoc signed community build, so macOS quarantines it on download an
 4. Open Safari and go to **Safari > Settings > Advanced** and check **Show features for web developers**.
 5. Go to **Safari > Settings > Developer** and check **Allow unsigned extensions** (you will be asked for your password).
 6. Go to **Safari > Settings > Extensions** and enable the checkbox next to **Nest Token Extractor**.
-7. With the extension selected, set its website access for the listed sites to **Allow**. Safari grants no host access by default. Note that a Google account still will not work in Safari even with access granted — see [Which browser should I use?](#which-browser-should-i-use) above.
+7. With the extension selected, set its website access for `google.com` and `nest.com` to **Allow** (or click **Always Allow on Every Website**), and check **Allow in Private Browsing** if you plan to extract in a Private Window. Safari grants no host access by default. Google accounts require **Safari 18 or newer** — see [Which browser should I use?](#which-browser-should-i-use) above.
 
 > [!IMPORTANT]
 > macOS resets **Allow unsigned extensions** every time Safari restarts. If the extension disappears from the toolbar after quitting Safari, re-check that box (step 5) and the extension comes back — you do not need to reinstall it.
@@ -86,13 +87,13 @@ This is an ad-hoc signed community build, so macOS quarantines it on download an
 > [!WARNING]
 > **⚠️ CRITICAL BROWSER WARNING (Google Chrome):**
 > Do **NOT** use Google Chrome or Microsoft Edge to extract cookies for Google Accounts, not even in Incognito mode. Modern Chromium-based browsers use aggressive, hardware-bound session security (Device Bound Session Credentials / DBSC) with Google. Cookies extracted via Chrome are cryptographically bound to the Chrome hardware profile, so they work at first and then fail with `Invalid authentication` in Python/Home Assistant or Homebridge within a few hours.
-> **You MUST use Firefox** to run this extraction and get a long-lived, portable cookie. Safari cannot do it either, for a different reason — see [Which browser should I use?](#which-browser-should-i-use).
+> **Use Firefox (or Safari 18+)** to run this extraction and get a long-lived, portable cookie — see [Which browser should I use?](#which-browser-should-i-use).
 
 > [!TIP]
 > **💡 FIREFOX ENHANCED TRACKING PROTECTION:**
 > Firefox's Enhanced Tracking Protection (ETP) can block third-party cookie transmission in cross-origin frames. The extension falls back to reading the cookie jar directly, so this is rarely a problem, but if the **Cookies** field still comes back empty you can click the **Shield** icon in the Firefox address bar on `home.nest.com`, toggle off **Enhanced Tracking Protection**, and restart the extraction.
 
-1. **For a Google account, open a Firefox private window** (Ctrl+Shift+P, or Cmd+Shift+P on macOS) and do the extraction there. Credentials last when they come from a fresh sign-in in a window that is closed right afterwards, and a private window is the easiest way to get that. If the sign-in keeps looping back to the start, turn off Enhanced Tracking Protection for `home.nest.com` as described above. Legacy Nest accounts can use any window.
+1. **For a Google account, open a Firefox or Safari 18+ private window** (Ctrl+Shift+P, or Cmd+Shift+P / Cmd+Shift+N on macOS) and do the extraction there. Credentials last when they come from a fresh sign-in in a window that is closed right afterwards, and a private window is the easiest way to get that. If the sign-in keeps looping back to the start in Firefox, turn off Enhanced Tracking Protection for `home.nest.com` as described above. Legacy Nest accounts can use any window.
 2. Click the extension icon in your browser toolbar.
 3. Select your environment (Production or Field Test).
 4. Click the **Open Nest & Start Extraction** button. This will automatically redirect you to the appropriate Nest portal.
@@ -114,8 +115,8 @@ Update to the latest release. Older versions aborted before opening the tab on F
 **The Cookies field stays empty (Firefox).**
 Make sure you are on the latest release, allowed the extension to run in private windows if you use one, and are signing in with a Google account (legacy Nest accounts produce an **Access Token** instead, which is expected). If it is still empty, turn off Enhanced Tracking Protection for `home.nest.com` and restart the extraction.
 
-**It stops at "Issue Token captured, still waiting for cookies" (Safari).**
-This is a WebKit limitation with no workaround: Google's session cookies are `HttpOnly`, and Safari exposes `HttpOnly` cookies to extensions through neither the `cookies` API nor the `Cookie` request header. Granting more site access does not help. Redo the extraction in Firefox. Extensions from v1.0.6 onward tell you this up front instead of waiting.
+**It stops at "Issue Token captured, waiting for Google cookies" (Safari).**
+Make sure you are on **Safari 18 or newer** (older Safari versions do not expose `HttpOnly` cookies to extensions), and that in **Safari > Settings > Extensions > Nest Token Extractor** you have set website access for `google.com` and `nest.com` to **Allow** (or clicked **Always Allow on Every Website**) and ticked **Allow in Private Browsing** if using a Private Window.
 
 **Credentials work at first, then fail with `Invalid authentication` (Chrome/Edge).**
 This is Chromium's device-bound session security. Redo the extraction in Firefox; there is no workaround inside the extension.
